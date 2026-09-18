@@ -1,0 +1,767 @@
+openapi: 3.0.3
+info:
+  title: Sistem Monitoring PLTS - API Contract
+  description: >
+    Dokumentasi API Contract untuk sistem monitoring PLTS.
+  version: 1.1.0
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Development Server (Local)
+  - url: https://api.plts-monitoring.com/api/v1
+    description: Production Server
+
+tags:
+  - name: Authentication
+    description: Manajemen Akses (Login, Refresh, Profile Pict, Logout)
+  - name: Telemetry Ingestion
+    description: Ingestion Raw Data 9 Metrik Sensor dari ESP8266
+  - name: Web Dashboard
+    description: Penyajian Data Realtime & History (Grafik Tren)
+  - name: Alerting & Thresholds
+    description: Manajemen Tresholds Safe Limit Sensor & Log Peringatan
+  - name: Reports
+    description: Laporan ringkasan berkala (dipakai fitur report Telegram Bot)
+  - name: Telegram Bot
+    description: Integrasi Webhook Notifikasi Automatic Alert & Command Bot
+  - name: System
+    description: Health-check kondisi sistem/device
+
+paths:
+  # AUTHENTICATION
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User Login
+      description: Memproses kredensial username & password teknisi untuk mendapatkan JWT Access Token dan Refresh Token.
+      operationId: userLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login Sukses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Format request tidak valid (username/password kosong)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                status: fail
+                message: Username dan password wajib diisi.
+        '401':
+          description: Gagal Login (Username atau Password Salah)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                status: fail
+                message: Username atau password yang Anda masukkan salah.
+        '423':
+          description: Akun terkunci sementara (terlalu banyak percobaan gagal beruntun)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                status: fail
+                message: Akun terkunci sementara, coba lagi dalam 15 menit.
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh Access Token
+      description: >
+        Memperbarui Access Token yang kadaluarsa menggunakan Refresh Token secara otomatis
+        tanpa perlu re-login.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: d9f8a7c6-5b4a-3f2e-1d0c-9b8a7f6e5d4c
+      responses:
+        '200':
+          description: Token Baru Berhasil Diterbitkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '401':
+          description: Refresh token tidak valid, kedaluwarsa, atau sudah pernah dipakai (rotated)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                status: fail
+                message: Sesi berakhir, silakan login kembali.
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get Profile Teknisi
+      description: >
+        Mengambil detail akun teknisi yang sedang aktif, termasuk `avatar_url` untuk
+        ditampilkan di pojok kanan atas Web Dashboard.
+      operationId: getProfile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Data Profil Berhasil Diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User Logout
+      description: Mencabut sesi aktif teknisi dan menghapus Refresh Token di server.
+      operationId: userLogout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Logout Berhasil
+          content:
+            application/json:
+              example:
+                status: success
+                message: Berhasil logout dan menghapus sesi.
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+
+  # TELEMETRY INGESTION
+  /telemetry/ingest:
+    post:
+      tags: [Telemetry Ingestion]
+      summary: Pengiriman Data Telemetri ESP8266
+      description: Menerima 9 metrik raw data dari sensor PLTS dengan validasi `X-Device-API-Key`.
+      operationId: ingestTelemetry
+      security:
+        - DeviceKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestRequest'
+      responses:
+        '200':
+          description: Data Telemetri Berhasil Disimpan
+          content:
+            application/json:
+              example:
+                status: success
+                message: Telemetry data successfully recorded.
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+ 
+  # WEB DASHBOARD
+  /dashboard/realtime:
+    get:
+      tags: [Web Dashboard]
+      summary: Fetch Data Realtime
+      description: Mengambil 9 metrik sensor terkini untuk ditampilkan pada Web Dashboard.
+      operationId: getRealtimeDashboard
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Data Realtime Berhasil Diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /dashboard/history:
+    get:
+      tags: [Web Dashboard]
+      summary: Fetch Riwayat Data (Grafik Tren)
+      description: >
+        Mengambil data historis (voltage, current, power)
+        untuk membuat grafik tren panel/beban/baterai.
+      operationId: getTelemetryHistory
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+          description: Batas awal rentang waktu. Default 24 jam sebelum `to`.
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+          description: Batas akhir rentang waktu. Default sekarang.
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [raw, 5m, 10m, 1h, 1d]
+            default: 10m
+          description: Interval agregasi rata-rata, agar rentang panjang tidak mengirim ribuan titik mentah.
+        - name: limit
+          in: query
+          schema: { type: integer, default: 200, maximum: 1000 }
+          description: Batas maksimum jumlah titik data yang dikembalikan.
+      responses:
+        '200':
+          description: Riwayat Data Berhasil Diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  # ALERTING & THRESHOLDS
+  /alerts/config:
+    get:
+      tags: [Alerting & Thresholds]
+      summary: Get Setting Ambang Batas Alert
+      description: Melihat batas aman (warning & critical) parameter PLTS saat ini.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Data Threshold Berhasil Diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThresholdsResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+    put:
+      tags: [Alerting & Thresholds]
+      summary: Update Ambang Batas Alert
+      description: >
+        Mengubah batas peringatan
+        agar server tahu kapan harus memicu notifikasi ke Telegram.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ThresholdsConfig'
+      responses:
+        '200':
+          description: Threshold Peringatan Berhasil Diperbarui
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ThresholdsResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  /alerts/log:
+    get:
+      tags: [Alerting & Thresholds]
+      summary: Riwayat Alert yang Pernah Dikirim
+      description: >
+        Log historis notifikasi (warning/critical) untuk ditampilkan di Web Dashboard,
+        dan menjadi sumber data untuk fitur Report berkala di Telegram Bot.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: level
+          in: query
+          schema: { type: string, enum: [warning, critical] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        '200':
+          description: Log Alert Berhasil Diambil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertsLogResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  # REPORTS
+  /reports/summary:
+    get:
+      tags: [Reports]
+      summary: Ringkasan Laporan Periodik
+      description: >
+        Ringkasan energi, uptime, dan jumlah alert dalam suatu periode. Dipakai fitur
+        report berkala Telegram Bot.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: { type: string, enum: [daily, weekly, monthly] }
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+          description: Tanggal acuan periode (default hari ini).
+      responses:
+        '200':
+          description: Ringkasan Laporan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '400':
+          $ref: '#/components/responses/400BadRequest'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  # SYSTEM
+  /system/status:
+    get:
+      tags: [System]
+      summary: Health-check Sistem & Device
+      description: Status koneksi device ESP8266 (online/last-seen). Dipakai bot untuk command `/status` dan indikator koneksi di dashboard.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Status Sistem
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatusResponse'
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+  # TELEGRAM BOT
+  /telegram/webhook:
+    post:
+      tags: [Telegram Bot]
+      summary: Webhook Listener Telegram Bot (Inbound)
+      description: >
+        Menerima command dari Teknisi via Telegram.
+      operationId: handleTelegramWebhook
+      security:
+        - TelegramSecretToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramUpdate'
+      responses:
+        '200':
+          description: Respons Webhook Berhasil
+          content:
+            application/json:
+              example:
+                status: success
+                message: Command handled successfully.
+        '401':
+          description: Secret token tidak cocok - request ditolak
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /internal/alerts/dispatch:
+    post:
+      tags: [Telegram Bot]
+      summary: "[Internal] Push Alert ke Bot Service (Outbound)"
+      description: >
+        Dipanggil oleh proses threshold segera setelah
+        `POST /telemetry/ingest` menemukan parameter di luar batas normal sehingga notifikasi peringatan langsung terkirim ke Telegram tanpa menunggu perintah dari pengguna.
+      security:
+        - ServiceKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Alert'
+      responses:
+        '202':
+          description: Diterima dan akan diteruskan sebagai pesan Telegram (fire-and-forget)
+        '401':
+          $ref: '#/components/responses/401Unauthorized'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Access token dari `POST /auth/login` atau `POST /auth/refresh`. FE menangani `401` dengan memanggil `/auth/refresh` dulu sebelum mengarahkan ke halaman login.
+    DeviceKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Device-API-Key
+      description: Dipakai ESP8266 saat mengirim data telemetri.
+    ServiceKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Service-Key
+      description: Dipakai server-to-server oleh proses backend saat memanggil Bot Service.
+    TelegramSecretToken:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+      description: Secret yang didaftarkan saat `setWebhook` ke Telegram, untuk memastikan request memang berasal dari Telegram.
+
+  schemas:
+    # ---------- Generic ----------
+    ApiError:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [fail]
+        message:
+          type: string
+
+    # ---------- Auth ----------
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: teknisi_plts }
+        password: { type: string, format: password, example: SecurePassword123! }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, example: usr_01 }
+        username: { type: string, example: teknisi_plts }
+        name: { type: string, example: Teknisi Utama PLTS }
+        role: { type: string, enum: [admin, technician] }
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Ditampilkan di pojok kanan atas Web Dashboard.
+          example: https://api.plts-monitoring.com/uploads/avatars/usr_01.png
+
+    AuthTokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, example: bearer }
+        expires_in: { type: integer, example: 3600, description: Umur access_token dalam detik }
+
+    LoginResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: object
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+            tokens: { $ref: '#/components/schemas/AuthTokens' }
+
+    RefreshResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/AuthTokens' }
+
+    ProfileResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/User' }
+
+    # ---------- Telemetry ----------
+    ElectricalReading:
+      type: object
+      required: [voltage, current, power]
+      properties:
+        voltage: { type: number, format: float, description: Volt (V), example: 13.65 }
+        current: { type: number, format: float, description: "mA. Boleh negatif khusus baterai (discharge).", example: 1021.90 }
+        power: { type: number, format: float, description: "mW. Boleh negatif khusus baterai (discharge).", example: 13854 }
+
+    TelemetryMetrics:
+      type: object
+      required: [panel, beban, baterai]
+      properties:
+        panel: { $ref: '#/components/schemas/ElectricalReading' }
+        beban: { $ref: '#/components/schemas/ElectricalReading' }
+        baterai: { $ref: '#/components/schemas/ElectricalReading' }
+      example:
+        panel: { voltage: 13.65, current: 1021.90, power: 13854 }
+        beban: { voltage: 5.11, current: 292.30, power: 1488 }
+        baterai: { voltage: 13.44, current: -840, power: 11306 }
+
+    IngestRequest:
+      type: object
+      required: [device_id, timestamp, metrics]
+      properties:
+        device_id: { type: string, example: ESP8266_PLTS_01 }
+        timestamp: { type: string, format: date-time, example: "2025-06-22T13:46:00Z" }
+        metrics: { $ref: '#/components/schemas/TelemetryMetrics' }
+      example:
+        device_id: ESP8266_PLTS_01
+        timestamp: "2025-06-22T13:46:00Z"
+        metrics:
+          panel: { voltage: 13.65, current: 1021.90, power: 13854 }
+          beban: { voltage: 5.11, current: 292.30, power: 1488 }
+          baterai: { voltage: 13.44, current: -840, power: 11306 }
+
+    RealtimeResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: object
+          properties:
+            panel: { $ref: '#/components/schemas/ElectricalReading' }
+            beban: { $ref: '#/components/schemas/ElectricalReading' }
+            baterai: { $ref: '#/components/schemas/ElectricalReading' }
+            system_status:
+              type: string
+              enum: [normal, warning, critical]
+              description: Hasil evaluasi terhadap ambang batas di `/alerts/config`.
+            last_updated: { type: string, format: date-time }
+      example:
+        status: success
+        data:
+          panel: { voltage: 13.65, current: 1021.90, power: 13854 }
+          beban: { voltage: 5.11, current: 292.30, power: 1488 }
+          baterai: { voltage: 13.44, current: -840, power: 11306 }
+          system_status: normal
+          last_updated: "2025-06-22T13:46:00Z"
+
+    HistoryPoint:
+      type: object
+      required: [timestamp, panel, beban, baterai]
+      properties:
+        timestamp: { type: string, format: date-time }
+        panel: { $ref: '#/components/schemas/ElectricalReading' }
+        beban: { $ref: '#/components/schemas/ElectricalReading' }
+        baterai: { $ref: '#/components/schemas/ElectricalReading' }
+      example:
+        timestamp: "2025-06-22T13:40:00Z"
+        panel: { voltage: 13.60, current: 950.00, power: 12920 }
+        beban: { voltage: 5.02, current: 290.00, power: 1456 }
+        baterai: { voltage: 13.40, current: -700, power: 9380 }
+
+    HistoryResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: object
+          properties:
+            interval: { type: string, example: 10m }
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+            points:
+              type: array
+              items: { $ref: '#/components/schemas/HistoryPoint' }
+      example:
+        status: success
+        data:
+          interval: 10m
+          from: "2025-06-21T13:40:00Z"
+          to: "2025-06-22T13:40:00Z"
+          points:
+            - timestamp: "2025-06-22T13:30:00Z"
+              panel: { voltage: 13.60, current: 950.00, power: 12920 }
+              beban: { voltage: 5.02, current: 290.00, power: 1456 }
+              baterai: { voltage: 13.40, current: -700, power: 9380 }
+            - timestamp: "2025-06-22T13:40:00Z"
+              panel: { voltage: 13.65, current: 1021.90, power: 13854 }
+              beban: { voltage: 5.11, current: 292.30, power: 1488 }
+              baterai: { voltage: 13.44, current: -840, power: 11306 }
+
+    # ---------- Thresholds & Alerts ----------
+    ThresholdLevel:
+      type: object
+      description: warning (peringatan dini, indikator visual saja) dan critical (darurat, memicu push alert ke Telegram).
+      properties:
+        warning: { type: number }
+        critical: { type: number }
+
+    ThresholdsConfig:
+      type: object
+      
+      properties:
+        baterai:
+          type: object
+          properties:
+            voltage_low:
+              allOf: [{ $ref: '#/components/schemas/ThresholdLevel' }]
+              description: Satuan Volt (V).
+            discharge_current:
+              allOf: [{ $ref: '#/components/schemas/ThresholdLevel' }]
+              description: Satuan mA. Nilai negatif (arah keluar dari baterai).
+        beban:
+          type: object
+          properties:
+            current_high:
+              allOf: [{ $ref: '#/components/schemas/ThresholdLevel' }]
+              description: "Satuan mA. Perkiraan dari data observasi (belum dari datasheet komponen) - konfirmasi ulang sebelum produksi."
+        panel:
+          type: object
+          properties:
+            current_high:
+              allOf: [{ $ref: '#/components/schemas/ThresholdLevel' }]
+              description: Satuan mA. Acuan rating SCC PWM 10A pada desain sistem.
+      example:
+        baterai:
+          voltage_low: { warning: 12.0, critical: 11.5 }
+          discharge_current: { warning: -1500, critical: -3000 }
+        beban:
+          current_high: { warning: 400, critical: 600 }
+        panel:
+          current_high: { warning: 8000, critical: 10000 }
+
+    ThresholdsResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/ThresholdsConfig' }
+
+    Alert:
+      type: object
+      properties:
+        id: { type: string, example: alrt_0001 }
+        timestamp: { type: string, format: date-time }
+        level: { type: string, enum: [warning, critical] }
+        metric: { type: string, example: baterai.voltage }
+        value: { type: number }
+        threshold: { type: number }
+        message: { type: string, example: Tegangan baterai di bawah ambang aman }
+        delivered_to_telegram: { type: boolean }
+
+    AlertsLogResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data:
+          type: object
+          properties:
+            alerts:
+              type: array
+              items: { $ref: '#/components/schemas/Alert' }
+
+    # ---------- Reports ----------
+    ReportSummary:
+      type: object
+      properties:
+        period: { type: string, enum: [daily, weekly, monthly] }
+        date_range:
+          type: object
+          properties:
+            from: { type: string, format: date-time }
+            to: { type: string, format: date-time }
+        energy:
+          type: object
+          properties:
+            panel_total_wh: { type: number, example: 1245.6 }
+            beban_total_wh: { type: number, example: 912.3 }
+            baterai_net_wh: { type: number, example: 333.3 }
+        uptime_percent: { type: number, example: 99.2 }
+        alert_count:
+          type: object
+          properties:
+            warning: { type: integer, example: 3 }
+            critical: { type: integer, example: 1 }
+
+    ReportResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/ReportSummary' }
+
+    # ---------- System ----------
+    SystemStatus:
+      type: object
+      properties:
+        device_online: { type: boolean }
+        ingest_last_seen: { type: string, format: date-time }
+        api_version: { type: string, example: "1.1.0" }
+
+    SystemStatusResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [success] }
+        data: { $ref: '#/components/schemas/SystemStatus' }
+
+    # ---------- Telegram ----------
+    TelegramUpdate:
+      type: object
+      properties:
+        update_id: { type: integer }
+        message:
+          type: object
+          properties:
+            message_id: { type: integer }
+            text: { type: string, example: "/status" }
+            chat:
+              type: object
+              properties:
+                id: { type: integer, example: 123456789 }
+
+  responses:
+    400BadRequest:
+      description: Payload request tidak valid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: fail
+            message: Format data yang dikirim tidak sesuai spesifikasi.
+    401Unauthorized:
+      description: Token / API Key tidak valid atau kadaluarsa
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            status: fail
+            message: Akses ditolak. Token tidak valid atau telah kadaluarsa.
